@@ -1,0 +1,8 @@
+
+drop table if exists `temp_g_ratio`;
+CREATE TABLE `temp_g_ratio` (
+  `ORDER_ID` varchar(255) COLLATE latin1_general_ci NOT NULL DEFAULT '',
+  `G Ratio` varchar(255) COLLATE latin1_general_ci DEFAULT NULL,
+  PRIMARY KEY (`ORDER_ID`),
+  KEY `orders` (`ORDER_ID`)
+) ENGINE=TokuDB DEFAULT CHARSET=latin1 COLLATE=latin1_general_ci;
