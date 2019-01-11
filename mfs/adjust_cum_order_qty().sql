@@ -1,3 +1,6 @@
+
+drop procedure  if exists adjust_cum_order_qty;
+
 create procedure adjust_cum_order_qty()
 BEGIN
 
