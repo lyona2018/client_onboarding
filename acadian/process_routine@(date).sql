@@ -1190,7 +1190,7 @@ BEGIN
   SELECT NOW() AS `Insert into standardoutput`;
   TRUNCATE standardoutput;
 
-  insert into processing_status values (processDate_in, 'Step 26  - build standard output PM View', now());
+  insert into processing_status values (processDate_in, 'Step 26  - build standard output Allocation View', now());
   INSERT INTO standardoutput
   ( date_time_gen
   , date_time_sent
@@ -1237,7 +1237,7 @@ BEGIN
        , MIN(orig_order_trader_date_adj) AS orig_order_trader_date
        , MAX(last_fill_date_adj)
        , 'acadian'
-       , PM_ORDER_ID
+       , CONCAT(ORIG_ORDER_ID, '-', ALLOCATIONS_ACCT_CD)
        , 'UPLOAD'
        , LEFT(SIDE, 1)
        , SUM(allocations_exec_qty)
@@ -1295,10 +1295,10 @@ BEGIN
 
   FROM temp_aggregated_info_working aw
   WHERE sjls_ticker IS NOT NULL
-  GROUP BY pm_order_id;
+  GROUP BY ORIG_ORDER_ID, ALLOCATIONS_ACCT_CD;
 
 
-  insert into processing_status values (processDate_in, 'Step 27  - build standard output Desk View', now());
+  insert into processing_status values (processDate_in, 'Step 27  - build standard output Trading View', now());
   INSERT INTO standardoutput
   ( date_time_gen
   , date_time_sent
@@ -1342,12 +1342,12 @@ BEGIN
   , tax
   , sjls_secid
   , file_date)
-  SELECT MIN(orig_order_trader_date_adj)
-       , MIN(orig_order_trader_date_adj)
+  SELECT MIN(orig_order_create_date_adj) # Formerly  (orig_order_trader_date_adj)
+       , MIN(orig_order_create_date_adj)
        , MAX(last_fill_date_adj)
        , 'acadian'
        , PM_ORDER_ID
-       , desk_order_id
+       , IF(MIN(REASON_CODE) = MAX(REASON_CODE), ORIG_ORDER_ID, CONCAT(ORIG_ORDER_ID, '-', REASON_CODE))
        , 'UPLOAD'
        , LEFT(SIDE, 1)
        , SUM(allocations_exec_qty)
@@ -1403,10 +1403,10 @@ BEGIN
 
   FROM temp_aggregated_info_working aw
   WHERE sjls_ticker IS NOT NULL
-  GROUP BY desk_order_id;
+  GROUP BY ORIG_ORDER_ID, REASON_CODE;
 
 
-  insert into processing_status values (processDate_in, 'Step 28  - build standard output broker View', now());
+  insert into processing_status values (processDate_in, 'Step 28  - build standard output TX', now());
 
   INSERT INTO standardoutput
   ( date_time_gen
@@ -1414,8 +1414,7 @@ BEGIN
   , date_time_closed
   , client_code
   , pm_order_id
-  , bs_order_id
-  , broker_order_id
+  , BROKER_ORDER_ID
   , source
   , side
   , shares_executed
@@ -1452,31 +1451,30 @@ BEGIN
   , tax
   , sjls_secid
   , file_date)
-  SELECT place_date
-       , place_date
-       , max_fill_date_adj
+  SELECT MIN(orig_order_trader_date_adj) # Formerly  (orig_order_trader_date_adj)
+       , MIN(orig_order_trader_date_adj)
+       , MAX(last_fill_date_adj)
        , 'acadian'
-       , pm_order_id
-       , desk_order_id
-       , place_id
+       , PM_ORDER_ID
+       , IF(MIN(REASON_CODE) = MAX(REASON_CODE), DESK_ORDER_ID, CONCAT(DESK_ORDER_ID, '-', REASON_CODE))
        , 'UPLOAD'
        , LEFT(SIDE, 1)
-       , exec_qty
-       , place_qty
+       , SUM(allocations_exec_qty)
+       , SUM(allocations_target_qty)
        , sjls_ticker
        , 'BLOOMBERG'
-       , p.instruction
-       , 'DAY'
+       , order_type
+       , order_duration
        , IF(side = 'S',
-            MAX(limit_price),
-            MIN(limit_price))
-       , SUM(aw.allocations_exec_amt) / SUM(aw.allocations_exec_qty)
+            MAX(ORDERS_LIMIT),
+            MIN(ORDERS_LIMIT))
+       , SUM(allocations_exec_amt) / SUM(allocations_exec_qty)
        , IF(MIN(BROKER_NAME) = MAX(BROKER_NAME),
             MIN(BROKER_NAME),
             'MULTI')
-       , IF(MIN(trader_NAME) = MAX(trader_NAME),
-            MIN(trader_NAME),
-            'MULTI')
+
+       , MIN(trader_NAME)
+
        , RIGHT(sjls_ticker, 2)
        , IF(MIN(ALLOCATIONS_ORDER_MANAGER) = MAX(ALLOCATIONS_ORDER_MANAGER),
             MIN(ALLOCATIONS_ORDER_MANAGER),
@@ -1486,18 +1484,19 @@ BEGIN
        , REASON_CODE
        , MTH_Decile
        , THA_Decile
-
        , IF(MIN(principal_agency) = MAX(principal_agency),
             MIN(principal_agency),
             'MULTI')
        , IPO
+
        , 'No Score'
-       , CONCAT_WS('~', 'Tick Pilot', 'No Score', IFNULL(aw.sedol, 'N.A.'), IFNULL(aw.cusip, 'N.A.'),
-                   'Start Time Bucket', 'N.A.', Security_Type)
+       , CONCAT_WS('~', 'Tick Pilot', 'No Score', IFNULL(sedol, 'N.A.'), IFNULL(cusip, 'N.A.'), 'Start Time Bucket',
+                   'Child_Orders', Security_Type)
+
        , 'N.A.'
-       , IF(ALGO_STRATEGY = '' OR ALGO_STRATEGY = 'N.A.', 'N.A.', CONCAT(p.PARENT_BROKER, '-', ALGO_STRATEGY))
+       , IF(ALGO_STRATEGY = '' OR ALGO_STRATEGY = 'N.A.', 'N.A.', CONCAT(PARENT_BROKER, '-', ALGO_STRATEGY))
        , cntry_of_risk
-       , PLC_COMMISSIONS
+       , SUM(aw.ALLOCATIONS_TOT_COMMISSION)
        , IF(MIN(ALLOCATIONS_ACCT_CD) = MAX(ALLOCATIONS_ACCT_CD),
             MIN(ALLOCATIONS_ACCT_CD),
             'MULTI')
@@ -1505,21 +1504,19 @@ BEGIN
        , sjls_currency
 
        , 'N.A.'
-       , IFNULL(p.BROKER_REASON, 'N.A.')
-       , IF(MIN(p.Venue) = MAX(p.Venue), MIN(p.Venue), 'MULTI')
+       , IFNULL(GROUP_CONCAT(DISTINCT BROKER_REASON ORDER BY BROKER_REASON SEPARATOR '-'), 'N.A.')
+       , IF(MIN(Venue) = MAX(Venue), MIN(Venue), 'MULTI')
        , adjust_ratio
-
        , sjls_secid
        , processdate_in
+
   FROM temp_aggregated_info_working aw
-     , temp_placements_working p
-  WHERE aw.order_id = p.order_id
-    AND sjls_ticker IS NOT NULL
-  GROUP BY place_id;
+  WHERE sjls_ticker IS NOT NULL
+  GROUP BY DESK_ORDER_ID, REASON_CODE;
 
 
   SELECT NOW() AS `INSERT INTO standardoutput for Venue`;
-  INSERT INTO processing_status VALUES (processDate_in, '29 - Venue View', now());
+  INSERT INTO processing_status VALUES (processDate_in, '29 - AX', now());
   INSERT IGNORE INTO standardoutput
   ( date_time_gen
   , date_time_sent

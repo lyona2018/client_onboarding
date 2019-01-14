@@ -1,3 +1,5 @@
+drop procedure if process_desk_orders_routine()
+
 create procedure process_desk_orders_routine()
 Begin
 
