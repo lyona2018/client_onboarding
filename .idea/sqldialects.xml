@@ -2,5 +2,7 @@
 <project version="4">
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/mfs/adjust_cum_order_qty().sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/mfs/check_all_prices_routine" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/mfs/process_routine(date).sql" dialect="MySQL" />
   </component>
 </project>

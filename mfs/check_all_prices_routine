@@ -134,6 +134,31 @@ BEGIN
   alter table temp_check_prices
     add index by_orderid (orderid);
 
+
+  UPDATE temp_check_prices
+  SET `status` = 'Null Ref Px'
+  WHERE `status` = 'Suspect'
+    and (high = 0 or high is null);
+
+
+  UPDATE temp_check_prices
+  SET `status` = 'Null Ref Px'
+  WHERE `status` = 'Suspect'
+    and (low = 0 or low is null);
+
+
+  update temp_convert_secs_check_prices
+  set `status` = 'OK'
+  where country IN ('IT', 'LN', 'SJ')
+    and (price * 100) BETWEEN lowprice and highprice;
+
+
+  update temp_convert_secs_check_prices
+  set `status` = 'OK'
+  where country IN ('IT', 'LN', 'SJ')
+    and price / 100 BETWEEN lowprice and highprice;
+
+
   insert into processing_status
   values (processDate_in, 'Step 18.14.3.02 - delete from secs_check_prices_hist orders that are in temp_check_prices',
           now());
@@ -184,19 +209,10 @@ BEGIN
 
 
   */
-  UPDATE temp_check_prices
-  SET `status` = 'Null Ref Px'
-  WHERE `status` = 'Suspect'
-    and (high = 0 or high is null);
-
-
-  UPDATE temp_check_prices
-  SET `status` = 'Null Ref Px'
-  WHERE `status` = 'Suspect'
-    and (low = 0 or low is null);
 
 
   insert into processing_status values (processDate_in, 'Step 18.14.5 - check_prices_routine is done', now());
+
 
 
 END;
