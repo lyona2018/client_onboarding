@@ -1,0 +1,203 @@
+create procedure check_all_prices_routine(IN processDate_in date)
+BEGIN
+
+  declare _orderid varchar(50);
+  declare _sjls_secid varchar(25);
+  declare _date_generated datetime;
+  declare _date_closed datetime;
+  declare _price double;
+  declare _statusCount double;
+  declare _testid VARCHAR(50) DEFAULT NULL;
+
+  declare done integer default 0;
+
+  declare orders_cursor cursor for select orderid, sjls_secid, price, date_generated, date_closed
+                                   from temp_convert_secs_check_prices;
+
+  declare continue handler for not found set done = 1;
+
+  insert into processing_status values (processDate_in, 'Step 18.14.1 - started check_prices_routine', now());
+
+  DROP TABLE IF EXISTS temp_check_prices;
+  CREATE TABLE `temp_check_prices`
+  (
+    `orderid`        varchar(45) COLLATE latin1_general_ci DEFAULT NULL,
+    `sjls_secid`     varchar(45) COLLATE latin1_general_ci DEFAULT NULL,
+    `date_generated` date                                  DEFAULT NULL,
+    `date_closed`    date                                  DEFAULT NULL,
+    `price`          double                                DEFAULT NULL,
+    `status`         varchar(45) COLLATE latin1_general_ci DEFAULT NULL,
+    `high`           double                                DEFAULT NULL,
+    `low`            double                                DEFAULT NULL
+  ) ENGINE = MyISAM
+    DEFAULT CHARSET = latin1
+    COLLATE = latin1_general_ci;
+
+  open orders_cursor;
+
+  set _statusCount = 0;
+  insert into processing_status values (processDate_in, 'Step 18.14.2 - entering cursor', now());
+  repeat
+
+    fetch orders_cursor into _orderid, _sjls_secid, _price, _date_generated, _date_closed;
+
+    set _statusCount = _statusCount + 1;
+
+    if _statusCount = 100000 then
+      begin
+        select 'another 100000 was processed' as status;
+        set _statusCount = 0;
+      end;
+    end if;
+
+    SET _testid = (
+      SELECT orderid
+      FROM secs_check_prices_hist
+      WHERE orderid = _orderid
+        AND price = _price
+        AND `status` = 'OK'
+      limit 1);
+    /*
+            IF _testid IS NULL THEN
+                BEGIN
+
+                 INSERT INTO temp_check_prices (
+                       `sjls_secid`,
+                       `date_generated`,
+                       `date_closed`,
+                       `orderid` ,
+                       `price` ,
+                       `status` ,
+                       `high`,
+                       `low`
+                    )
+                     SELECT
+                          _sjls_secid
+                        , _date_generated
+                        , _date_closed
+                        , _orderid
+                        , _price
+                        , IF((_price <= max(s.ph) * 1.1) AND (_price >= min(s.pl) * .90),
+                            'OK',
+                            'Suspect')
+                        , max(s.ph)
+                        , min(s.pl)
+                       FROM
+                            market_data.sec_daily_stats s
+                      WHERE
+                            s.sjls_secid = _sjls_secid
+                        AND
+                            s.trade_date >= _date_generated
+                        AND
+                            s.trade_date < date_add(_date_closed, INTERVAL 2 DAY);
+                END;
+            END IF;
+    */
+
+    IF _testid IS NULL THEN
+      BEGIN
+        INSERT INTO temp_check_prices (`sjls_secid`,
+                                       `date_generated`,
+                                       `date_closed`,
+                                       `orderid`,
+                                       `price`,
+                                       `status`,
+                                       `low`,
+                                       `high`)
+        SELECT _sjls_secid
+             , _date_generated
+             , _date_closed
+             , _orderid
+             , _price
+             , IF((_price < max(s.ph) * 1.05) AND (_price > min(s.pl) * .95),
+                  'OK',
+                  'Suspect')
+             , min(s.pl)
+             , max(s.ph)
+        FROM market_data.sec_daily_stats s
+        WHERE s.sjls_secid = _sjls_secid
+          AND s.trade_date >= IF(WEEKDAY(_date_generated) = 0, date_add(_date_generated, INTERVAL -3 DAY),
+                                 date_add(_date_generated, INTERVAL -1 DAY))
+          AND s.trade_date < date_add(_date_closed, INTERVAL 1 DAY);
+      END;
+    END IF;
+
+
+  until done end repeat;
+
+  close orders_cursor;
+
+  insert into processing_status values (processDate_in, 'Step 18.14.2 - cursor done', now());
+
+  insert into processing_status
+  values (processDate_in, 'Step 18.14.3.01 - create index on temp_check_prices.orderid ', now());
+  alter table temp_check_prices
+    add index by_orderid (orderid);
+
+  insert into processing_status
+  values (processDate_in, 'Step 18.14.3.02 - delete from secs_check_prices_hist orders that are in temp_check_prices',
+          now());
+  delete
+  from secs_check_prices_hist
+       using
+       secs_check_prices_hist,
+       temp_check_prices
+  where secs_check_prices_hist.orderid = temp_check_prices.orderid;
+
+  insert into processing_status values (processDate_in, 'Step 18.14.3.03 - transfer to secs_check_prices_hist', now());
+  INSERT INTO secs_check_prices_hist (sjls_secid,
+                                      date_generated,
+                                      date_closed,
+                                      orderid,
+                                      price,
+                                      status,
+                                      high,
+                                      low)
+  select sjls_secid,
+         date_generated,
+         date_closed,
+         orderid,
+         price,
+         status,
+         high,
+         low
+  from temp_check_prices;
+
+  insert into processing_status
+  values (processDate_in, 'Step 18.14.4 - update temp_convert_secs_check_prices with price check status', now());
+  update temp_convert_secs_check_prices t,secs_check_prices_hist s
+  set t.highprice = high,
+      t.lowprice= low,
+      t.`status`  = s.`status`
+  where s.orderid = t.orderid;
+
+  /*
+
+  update temp_convert_secs_check_prices
+     set `status` = 'OK'
+   where country IN('IT', 'LN', 'SJ') and price * 110 BETWEEN lowprice and highprice;
+
+
+   update temp_convert_secs_check_prices
+     set `status` = 'OK'
+   where country IN('IT', 'LN', 'SJ') and price / 110 BETWEEN lowprice and highprice;
+
+
+  */
+  UPDATE temp_check_prices
+  SET `status` = 'Null Ref Px'
+  WHERE `status` = 'Suspect'
+    and (high = 0 or high is null);
+
+
+  UPDATE temp_check_prices
+  SET `status` = 'Null Ref Px'
+  WHERE `status` = 'Suspect'
+    and (low = 0 or low is null);
+
+
+  insert into processing_status values (processDate_in, 'Step 18.14.5 - check_prices_routine is done', now());
+
+
+END;
+
